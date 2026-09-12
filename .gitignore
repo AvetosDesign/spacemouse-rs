@@ -1,6 +1,11 @@
 #
-# Claude AI assisted in the writing of this file.  
-# It was reviewed by a human.
+# Claude AI assisted in the writing of this file.
 #
 
 target/
+
+# This is a library crate; the lock file isn't committed so that both local
+# builds and CI always resolve against the latest semver-compatible
+# dependency versions (catches upstream breakage early) rather than a
+# pinned-in-time snapshot, which matters more for a binary/application.
+Cargo.lock
