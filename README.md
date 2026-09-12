@@ -1,7 +1,5 @@
 # spacemouse
 
-*Claude AI assisted in the writing of this file.*
-
 Provides a cross-platform (Windows/macOS/Linux) raw HID capture backend for
 3Dconnexion SpaceMouse and compatible 3D-mouse devices. HID reports are read
 directly via `hidapi` rather than depending on 3Dconnexion's proprietary
@@ -49,3 +47,6 @@ both are unambiguously compatible with this crate's MIT license.
 ## Build Documentation
 
     cargo doc --no-deps --document-private-items --open
+
+## Disclaimer
+*Claude AI assisted in the writing of this file.*
