@@ -20,7 +20,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install libudev (Linux only)
         if: runner.os == 'Linux'
@@ -47,7 +47,7 @@ jobs:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -57,7 +57,7 @@ jobs:
     name: Docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install libudev
         run: |
           sudo apt-get update
@@ -73,7 +73,14 @@ jobs:
     name: Security audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Cargo.lock isn't committed (this is a library crate - see .gitignore),
+      # but rustsec/audit-check needs one present to know exact dependency
+      # versions to check against the advisory database. Generate one just
+      # for this job; it isn't committed back.
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
