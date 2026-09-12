@@ -34,7 +34,7 @@ const READ_BUF_LEN: usize = 64;
 /// connection-state changes to the callbacks given to
 /// [`SpaceMouseBackend::new`]. Constructing one is a safe no-op on a machine
 /// without a compatible device connected: The background thread simply
-/// keeps quietly re-scanning (see [`RESCAN_INTERVAL`]) until one shows up,
+/// keeps quietly re-scanning (see `RESCAN_INTERVAL`) until one shows up,
 /// and keeps doing so again after a device is unplugged, so hot-plugging
 /// "just works" without recreating this object.
 pub struct SpaceMouseBackend {
@@ -97,7 +97,7 @@ impl SpaceMouseBackend {
   /// Set whether the device's LED should be lit.
   ///
   /// Applied immediately if a device is currently open, and reapplied
-  /// automatically the next time one is (re)opened (see [`capture_loop`]),
+  /// automatically the next time one is (re)opened (see `capture_loop`),
   /// so a disconnect/reconnect doesn't need this called again. Errors
   /// (i.e., the device doesn't have an LED, or there's a transient write
   /// failure) are silently ignored.
