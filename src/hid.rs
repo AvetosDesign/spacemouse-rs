@@ -1,8 +1,5 @@
 //! `hidapi`-based background capture thread.
 
-// AI DISCLAIMER: Claude AI assisted in the writing of this file.
-// It was reviewed and edited by a human.
-
 use crate::device::{
   SpaceMouseMotion, KNOWN_VENDOR_IDS, USAGE_ID_MULTI_AXIS_CONTROLLER,
   USAGE_PAGE_GENERIC_DESKTOP,
@@ -13,9 +10,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
-/// How long to wait between (re-)scans while no compatible device is open,
-/// to avoid busy-looping when nothing is connected or a `HidApi`/open call
-/// keeps failing.
+/// Wait between (re-)scans while no compatible device is open.
 const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
 
 /// `hidapi` blocking-read timeout while a device is open. Chosen short
@@ -23,8 +18,7 @@ const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
 /// busy-looping the background thread when the device is idle.
 const READ_TIMEOUT_MS: i32 = 200;
 
-/// HID input reports from these devices are at most a handful of bytes;
-/// this is generous headroom.
+/// HID input reports are small. This includes generous headroom.
 const READ_BUF_LEN: usize = 64;
 
 /// Cross-platform SpaceMouse HID capture backend.
@@ -33,10 +27,9 @@ const READ_BUF_LEN: usize = 64;
 /// device, reads its raw HID reports, and forwards decoded motion /
 /// connection-state changes to the callbacks given to
 /// [`SpaceMouseBackend::new`]. Constructing one is a safe no-op on a machine
-/// without a compatible device connected: The background thread simply
-/// keeps quietly re-scanning (see `RESCAN_INTERVAL`) until one shows up,
-/// and keeps doing so again after a device is unplugged, so hot-plugging
-/// "just works" without recreating this object.
+/// without a compatible device connected. The background thread quietly
+/// re-scans (see `RESCAN_INTERVAL`) until one shows up, then starts again
+/// after a device is unplugged.
 pub struct SpaceMouseBackend {
   /// Signals the background thread to stop and return.
   stop: Arc<AtomicBool>,
@@ -57,11 +50,11 @@ impl SpaceMouseBackend {
   ///
   /// `on_motion` is invoked (on the background thread, *not* the caller's
   /// thread) with the full, merged six-axis state every time a report is
-  /// decoded. `on_connected_changed` is invoked (also on the background
-  /// thread) whenever a compatible device is opened or lost. Callers that
-  /// need these on a specific thread (e.g. a Qt object's own thread) are
-  /// responsible for the hop themselves; see `spacemouseinputrust.cpp` for
-  /// how the C++ side does this via `QMetaObject::invokeMethod`.
+  /// decoded. `on_connected_changed` is invoked on the background thread
+  /// whenever a compatible device is opened or lost. Callers that need
+  /// these on a specific thread (e.g. a Qt object's own thread) are
+  /// responsible for the hop themselves; LibrePCB's C++ SpaceMouse input
+  /// wrapper does this via `QMetaObject::invokeMethod`.
   pub fn new<M, C>(on_motion: M, on_connected_changed: C) -> Self
   where
     M: Fn(SpaceMouseMotion) + Send + 'static,
@@ -94,12 +87,11 @@ impl SpaceMouseBackend {
     self.connected.load(Ordering::Relaxed)
   }
 
-  /// Set whether the device's LED should be lit.
+  /// Set whether the device's LED is lit.
   ///
   /// Applied immediately if a device is currently open, and reapplied
-  /// automatically the next time one is (re)opened (see `capture_loop`),
-  /// so a disconnect/reconnect doesn't need this called again. Errors
-  /// (i.e., the device doesn't have an LED, or there's a transient write
+  /// automatically the next time one is (re)opened (see `capture_loop`).
+  /// Errors (i.e., the device has no LED, or there's a transient write
   /// failure) are silently ignored.
   ///
   /// The underlying channel send can only fail if the background thread
@@ -138,10 +130,7 @@ fn capture_loop<M, C>(
   M: Fn(SpaceMouseMotion),
   C: Fn(bool),
 {
-  // LED state is currently connection-bound, not a user setting. The
-  // application sends an explicit `true` on every connect and an explicit
-  // `false` right before app shutdown.  Regardless, we default the state
-  // here to `true` defensively.
+  // LED state is connection-bound
   let mut desired_led = true;
 
   while !stop.load(Ordering::Relaxed) {
@@ -183,10 +172,7 @@ fn capture_loop<M, C>(
       // Drain (and apply) any pending LED command before honoring a `stop`
       // request below. Ordering matters: if this were done after the `stop`
       // check, a command sent just before shutdown (see `GuiApplication`'s
-      // destructor) could be left sitting in the channel forever, since the
-      // thread would already have returned by the time it would otherwise
-      // have been drained - silently leaving the LED lit until physical
-      // unplug instead of turning off at app shutdown as intended.
+      // destructor) could be left sitting in the channel forever.
       let mut led_changed = false;
       while let Ok(enabled) = led_receiver.try_recv() {
         if enabled != desired_led {
@@ -238,10 +224,8 @@ fn capture_loop<M, C>(
 /// All LED-capable devices across the SpaceNavigator/SpaceMouse/SpacePilot
 /// product line utilize the same HID report format:
 /// Report ID `0x04` + a single data byte (`0x01` on / `0x00` off)
-/// This format has been confirmed against PySpaceMouse's own raw-`hidapi`
-/// `set_led()` and its per-model device table. Best-effort: not every device
-/// has an LED, and there's no reliable way to detect a transient write
-/// failure, so both are silently ignored here.
+/// Best-effort: quietly ignore devices without an LED and transient
+/// write failures.
 fn write_led(device: &hidapi::HidDevice, enabled: bool) {
   let _ = device.write(&[0x04, if enabled { 0x01 } else { 0x00 }]);
 }

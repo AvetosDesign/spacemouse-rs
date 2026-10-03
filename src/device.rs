@@ -1,6 +1,3 @@
-// Claude AI assisted in the writing of this file.
-// It was reviewed and edited by a human.
-
 //! Device identification and the raw motion data type.
 
 /// USB vendor ID used by current 3Dconnexion devices.
@@ -24,11 +21,10 @@ pub const USAGE_ID_MULTI_AXIS_CONTROLLER: u16 = 0x08;
 
 /// Raw, unscaled motion values reported by a 3D mouse.
 ///
-/// Mirrors C++'s `SpaceMouseMotionEvent`
-/// (`libs/librepcb/editor/spacemouse/if_spacemouseinputbackend.h`) field for
-/// field. Values are whatever the device's translation/rotation HID reports
-/// contain - no sensitivity scaling, dead-zone handling, or calibration is
-/// applied here (see the crate-level docs).
+/// Mirrors LibrePCB's C++ `SpaceMouseMotionEvent` field for field. Values are
+/// whatever the device's translation/rotation HID reports contain - no
+/// sensitivity scaling, dead-zone handling, or calibration is applied here (see
+/// the crate-level docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SpaceMouseMotion {
   /// Pan left(-)/right(+)
