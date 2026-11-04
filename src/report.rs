@@ -1,6 +1,3 @@
-// Claude AI assisted in the writing of this file.
-// It was reviewed, and comments rewritten, by a human.
-
 //! Raw HID input report parsing.
 //!
 //! Isolated from [`crate::hid`] specifically so it can be unit-tested

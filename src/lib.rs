@@ -1,5 +1,3 @@
-// Claude AI assisted in the writing of this file.
-
 //! spacemouse
 //!
 //! Cross-platform (Windows/macOS/Linux) raw HID capture for 3Dconnexion

@@ -1,7 +1,3 @@
-#
-# Claude AI assisted in the writing of this file.
-#
-
 target/
 
 # This is a library crate; the lock file isn't committed so that both local
