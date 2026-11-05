@@ -52,9 +52,7 @@ impl SpaceMouseBackend {
   /// thread) with the full, merged six-axis state every time a report is
   /// decoded. `on_connected_changed` is invoked on the background thread
   /// whenever a compatible device is opened or lost. Callers that need
-  /// these on a specific thread (e.g. a Qt object's own thread) are
-  /// responsible for the hop themselves; LibrePCB's C++ SpaceMouse input
-  /// wrapper does this via `QMetaObject::invokeMethod`.
+  /// these on a specific thread are responsible for the hop themselves.
   pub fn new<M, C>(on_motion: M, on_connected_changed: C) -> Self
   where
     M: Fn(SpaceMouseMotion) + Send + 'static,
@@ -171,8 +169,8 @@ fn capture_loop<M, C>(
     loop {
       // Drain (and apply) any pending LED command before honoring a `stop`
       // request below. Ordering matters: if this were done after the `stop`
-      // check, a command sent just before shutdown (see `GuiApplication`'s
-      // destructor) could be left sitting in the channel forever.
+      // check, a command sent just before shutdown could be left sitting in
+      // the channel forever.
       let mut led_changed = false;
       while let Ok(enabled) = led_receiver.try_recv() {
         if enabled != desired_led {

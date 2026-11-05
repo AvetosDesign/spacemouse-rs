@@ -15,23 +15,21 @@ pub const KNOWN_VENDOR_IDS: [u16; 2] =
 pub const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
 
 /// HID usage ID identifying a "Multi-axis Controller" within the Generic
-/// Desktop Controls usage page - the usage LibrePCB filters on, matching
-/// what the previous Win32 Raw Input backend already did.
+/// Desktop Controls usage page.
 pub const USAGE_ID_MULTI_AXIS_CONTROLLER: u16 = 0x08;
 
 /// Raw, unscaled motion values reported by a 3D mouse.
 ///
-/// Mirrors LibrePCB's C++ `SpaceMouseMotionEvent` field for field. Values are
-/// whatever the device's translation/rotation HID reports contain - no
-/// sensitivity scaling, dead-zone handling, or calibration is applied here (see
-/// the crate-level docs).
+/// Values are whatever the device's translation/rotation HID reports contain -
+/// no sensitivity scaling, dead-zone handling, or calibration is applied here
+/// (see the crate-level docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SpaceMouseMotion {
-  /// Pan left(-)/right(+)
+  /// Translate left(-)/right(+)
   pub translation_x: i16,
-  /// Pan away(-)/towards(+) the user
+  /// Translate away(-)/towards(+) the user
   pub translation_y: i16,
-  /// Pan/zoom down(-)/up(+)
+  /// Translate down(-)/up(+)
   pub translation_z: i16,
   /// Tilt (pitch)
   pub rotation_x: i16,

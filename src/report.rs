@@ -14,8 +14,7 @@
 //!
 //! This matches the format used by `spacenavd` and other existing
 //! open-source 3Dconnexion drivers, and has been confirmed correct against
-//! a real 3Dconnexion SpaceMouse (translation, rotation, and axis signs
-//! all behaving as expected in LibrePCB's schematic, PCB, and 3D views).
+//! a real 3Dconnexion SpaceMouse (translation, rotation, and axis signs).
 
 /// One decoded HID input report: either a translation or a rotation sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

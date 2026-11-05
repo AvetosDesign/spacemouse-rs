@@ -7,9 +7,7 @@
 //! This crate deliberately knows nothing about sensitivity, inversion,
 //! calibration or dead-zones. It always reports the device's raw,
 //! unscaled axis readings. Data manipulation (scaling, filtering, mapping
-//! to application actions, etc.) is left entirely to the caller, so the
-//! crate's surface stays small and easy to wrap with any FFI or binding
-//! layer a consumer needs.
+//! to application actions, etc.) is left entirely to the caller.
 
 #![cfg_attr(feature = "fail-on-warnings", deny(warnings))]
 #![warn(missing_docs)]

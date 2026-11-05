@@ -9,11 +9,8 @@ This crate deliberately knows nothing about sensitivity, inversion,
 calibration or dead-zones — it reports the device's raw, unscaled axis
 readings and leaves interpretation to the caller.
 
-Originally developed as part of [LibrePCB](https://librepcb.org)'s SpaceMouse
-support; extracted into this standalone crate so it can be reused outside
-that project. LibrePCB itself consumes this crate through a small FFI layer
-that lives in its own `rust-core` crate rather than here, so this crate has
-no C/C++ bindings of its own.
+Built for [LibrePCB](https://librepcb.org)'s SpaceMouse support, but usable by
+any application.
 
 ## Why `hidapi`
 
@@ -27,10 +24,7 @@ macOS and Windows, `hidapi` vendors a small amount of C source code (the
 underlying `hidapi` C library) and compiles it as part of `cargo build`, via
 the `cc` crate.
 
-Licensing is not a concern: the C `hidapi` library is dual/triple licensed
-(GPLv2-or-later / a 3-clause BSD variant / the original permissive "HIDAPI"
-license, at the user's choice) and the `hidapi` Rust crate itself is MIT —
-both are unambiguously compatible with this crate's MIT license.
+This crate is offered under the terms of the MIT license.
 
 ## Features
 
