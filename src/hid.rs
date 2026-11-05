@@ -27,9 +27,8 @@ const READ_BUF_LEN: usize = 64;
 /// device, reads its raw HID reports, and forwards decoded motion /
 /// connection-state changes to the callbacks given to
 /// [`SpaceMouseBackend::new`]. Constructing one is a safe no-op on a machine
-/// without a compatible device connected. The background thread quietly
-/// re-scans (see `RESCAN_INTERVAL`) until one shows up, then starts again
-/// after a device is unplugged.
+/// without a compatible device connected. A device that is plugged in later,
+/// or unplugged and replugged, is picked up automatically.
 pub struct SpaceMouseBackend {
   /// Signals the background thread to stop and return.
   stop: Arc<AtomicBool>,
@@ -88,14 +87,10 @@ impl SpaceMouseBackend {
   /// Set whether the device's LED is lit.
   ///
   /// Applied immediately if a device is currently open, and reapplied
-  /// automatically the next time one is (re)opened (see `capture_loop`).
-  /// Errors (i.e., the device has no LED, or there's a transient write
-  /// failure) are silently ignored.
-  ///
-  /// The underlying channel send can only fail if the background thread
-  /// has already exited (e.g. concurrently with [`Drop::drop`]), which is
-  /// equally harmless to ignore here.
+  /// whenever a device is (re)opened. Devices without an LED and write
+  /// failures are silently ignored.
   pub fn set_led(&self, enabled: bool) {
+    // Send only fails once the background thread has exited, e.g. during drop.
     let _ = self.led_sender.send(enabled);
   }
 }

@@ -1,0 +1,14 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: spacemouse-rs
+Source: https://github.com/AvetosDesign/spacemouse-rs
+
+Files:
+ .gitattributes
+ .github/*
+ .gitignore
+ .rustfmt.toml
+ Cargo.toml
+ README.md
+ src/**.rs
+Copyright: Avetos Design
+License: MIT

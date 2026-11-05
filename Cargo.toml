@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "Cross-platform raw HID capture for 3Dconnexion SpaceMouse devices"
 repository = "https://github.com/AvetosDesign/spacemouse-rs"
+exclude = ["/.git*", "/.reuse/", "/.rustfmt.toml", "/LICENSES/", "*.sh"]
 
 [lib]
 crate-type = ["lib"]

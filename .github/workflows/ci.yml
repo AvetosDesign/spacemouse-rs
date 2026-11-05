@@ -1,74 +1,46 @@
 name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+on: [push, pull_request]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Build & test (${{ matrix.os }})
+  build_and_test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            toolchain: beta
+          - os: macos-15
+            toolchain: nightly
+          - os: windows-2025
+            toolchain: stable
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: actions/checkout@v4
+      - name: Install Toolchain
+        run: |
+          rustup update ${{ matrix.toolchain }}
+          rustup default ${{ matrix.toolchain }}
       - name: Build
-        run: cargo build --all-targets --verbose
-
+        run: cargo build --verbose --features="fail-on-warnings"
       - name: Test
-        run: cargo test --verbose
+        run: cargo test --verbose --features="fail-on-warnings"
+      - name: Docs
+        run: cargo doc --no-deps --document-private-items --features="fail-on-warnings"
 
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-  fmt:
-    name: Formatting
-    runs-on: ubuntu-latest
+  stylecheck:
+    runs-on: ubuntu-24.04
+    container: librepcb/librepcb-dev:devtools-4
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build docs
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --document-private-items
-
-  audit:
-    name: Security audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      # Cargo.lock isn't committed (this is a library crate - see .gitignore),
-      # but rustsec/audit-check needs one present to know exact dependency
-      # versions to check against the advisory database. Generate one just
-      # for this job; it isn't committed back.
-      - name: Generate Cargo.lock
-        run: cargo generate-lockfile
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+      - name: Stylecheck
+        run: .github/workflows/stylecheck.sh
+      - name: Cargo Clippy
+        run: cargo clippy --features="fail-on-warnings"
+      - name: Reuse Lint
+        run: reuse --suppress-deprecation lint
