@@ -1,14 +1,28 @@
-//! `hidapi`-based background capture thread.
+//! `hidapi`-based background capture loop.
 
-use crate::device::{
-  SpaceMouseMotion, KNOWN_VENDOR_IDS, USAGE_ID_MULTI_AXIS_CONTROLLER,
-  USAGE_PAGE_GENERIC_DESKTOP,
-};
 use crate::report::{parse_report, ReportAxes};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
+
+/// USB vendor ID used by current 3Dconnexion devices.
+const VENDOR_ID_3DCONNEXION: u16 = 0x256f;
+
+/// Legacy USB vendor ID used by early (Logitech-era) 3Dconnexion devices.
+const VENDOR_ID_LOGITECH_3DCONNEXION: u16 = 0x046d;
+
+/// All USB vendor IDs the device must match to be considered, in no
+/// particular priority order.
+const KNOWN_VENDOR_IDS: [u16; 2] =
+  [VENDOR_ID_3DCONNEXION, VENDOR_ID_LOGITECH_3DCONNEXION];
+
+/// HID usage page identifying "Generic Desktop Controls".
+const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
+
+/// HID usage ID identifying a "Multi-axis Controller" within the Generic
+/// Desktop Controls usage page.
+const USAGE_ID_MULTI_AXIS_CONTROLLER: u16 = 0x08;
 
 /// Wait between (re-)scans while no compatible device is open.
 const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
@@ -21,30 +35,52 @@ const READ_TIMEOUT_MS: i32 = 200;
 /// HID input reports are small. This includes generous headroom.
 const READ_BUF_LEN: usize = 64;
 
-/// Cross-platform SpaceMouse HID capture backend.
+/// Raw, unscaled motion values reported by a 3D mouse.
 ///
-/// Owns a background thread that continuously (re-)discovers a compatible
-/// device, reads its raw HID reports, and forwards decoded motion /
-/// connection-state changes to the callbacks given to
-/// [`SpaceMouseBackend::new`]. Constructing one is a safe no-op on a machine
-/// without a compatible device connected. A device that is plugged in later,
-/// or unplugged and replugged, is picked up automatically.
-pub struct SpaceMouseBackend {
+/// Values are whatever the device's translation/rotation HID reports contain -
+/// no sensitivity scaling, dead-zone handling, or calibration is applied here
+/// (see the crate-level docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SpaceMouseMotion {
+  /// Translate left(-)/right(+)
+  pub translation_x: i16,
+  /// Translate away(-)/towards(+) the user
+  pub translation_y: i16,
+  /// Translate down(-)/up(+)
+  pub translation_z: i16,
+  /// Tilt (pitch)
+  pub rotation_x: i16,
+  /// Tilt (roll)
+  pub rotation_y: i16,
+  /// Twist (yaw)
+  pub rotation_z: i16,
+}
+
+/// Cross-platform SpaceMouse HID capture loop.
+///
+/// Handle to a loop running on a background thread, which continuously
+/// (re-)discovers a compatible device, reads its raw HID reports, and
+/// forwards decoded motion / connection-state changes to the callbacks given
+/// to [`SpaceMouseLoop::new`]. The loop stops when the handle is dropped.
+/// Constructing one is a safe no-op on a machine without a compatible device
+/// connected. A device that is plugged in later, or unplugged and replugged,
+/// is picked up automatically.
+pub struct SpaceMouseLoop {
   /// Signals the background thread to stop and return.
   stop: Arc<AtomicBool>,
   /// Whether a compatible device is currently open. Kept outside the
-  /// thread so [`SpaceMouseBackend::is_connected`] doesn't have to
+  /// thread so [`SpaceMouseLoop::is_connected`] doesn't have to
   /// synchronize with it via the callbacks.
   connected: Arc<AtomicBool>,
   /// Sends desired LED on/off state into the background thread - see
-  /// [`SpaceMouseBackend::set_led`].
+  /// [`SpaceMouseLoop::set_led`].
   led_sender: mpsc::Sender<bool>,
   /// The background thread, joined on drop. Always `Some` until
   /// [`Drop::drop`] runs.
   thread: Option<thread::JoinHandle<()>>,
 }
 
-impl SpaceMouseBackend {
+impl SpaceMouseLoop {
   /// Start capturing in a new background thread.
   ///
   /// `on_motion` is invoked (on the background thread, *not* the caller's
@@ -63,7 +99,7 @@ impl SpaceMouseBackend {
     let thread_stop = Arc::clone(&stop);
     let thread_connected = Arc::clone(&connected);
     let thread = thread::spawn(move || {
-      capture_loop(
+      run(
         &thread_stop,
         &thread_connected,
         &led_receiver,
@@ -95,7 +131,7 @@ impl SpaceMouseBackend {
   }
 }
 
-impl Drop for SpaceMouseBackend {
+impl Drop for SpaceMouseLoop {
   fn drop(&mut self) {
     self.stop.store(true, Ordering::Relaxed);
     if let Some(t) = self.thread.take() {
@@ -112,8 +148,8 @@ impl Drop for SpaceMouseBackend {
 /// Repeatedly looks for a compatible device, reads from it until it's lost
 /// (or `stop` is set), then goes back to looking for one - so a
 /// hot-unplugged/replugged device recovers on its own without recreating
-/// [`SpaceMouseBackend`].
-fn capture_loop<M, C>(
+/// [`SpaceMouseLoop`].
+fn run<M, C>(
   stop: &AtomicBool,
   connected: &AtomicBool,
   led_receiver: &mpsc::Receiver<bool>,

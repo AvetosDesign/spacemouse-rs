@@ -1,8 +1,8 @@
 //! Raw HID input report parsing.
 //!
-//! Isolated from [`crate::hid`] specifically so it can be unit-tested
-//! against captured byte sequences without any real hardware attached (see
-//! the tests below).
+//! Isolated from [`crate::spacemouse_loop`] specifically so it can be
+//! unit-tested against captured byte sequences without any real hardware
+//! attached (see the tests below).
 //!
 //! 3Dconnexion's wired-HID devices (as opposed to the newer "Wireless"/"Pro"
 //! models that speak a different, undocumented report format) report

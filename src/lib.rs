@@ -13,10 +13,8 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
-pub mod device;
-mod hid;
 mod report;
+mod spacemouse_loop;
 
 // Re-Exports
-pub use device::SpaceMouseMotion;
-pub use hid::SpaceMouseBackend;
+pub use spacemouse_loop::{SpaceMouseLoop, SpaceMouseMotion};

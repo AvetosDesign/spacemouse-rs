@@ -1,6 +1,6 @@
 # spacemouse
 
-Provides a cross-platform (Windows/macOS/Linux) raw HID capture backend for
+Provides a cross-platform (Windows/macOS/Linux) raw HID capture for
 3Dconnexion SpaceMouse and compatible 3D-mouse devices. HID reports are read
 directly via `hidapi` rather than depending on 3Dconnexion's proprietary
 driver (3DxWare).
