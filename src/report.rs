@@ -16,14 +16,7 @@
 //! open-source 3Dconnexion drivers, and has been confirmed correct against
 //! a real 3Dconnexion SpaceMouse (translation, rotation, and axis signs).
 
-/// One decoded HID input report: either a translation or a rotation sample.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportAxes {
-  /// Translation X/Y/Z, in that order.
-  Translation(i16, i16, i16),
-  /// Rotation X/Y/Z, in that order.
-  Rotation(i16, i16, i16),
-}
+use crate::event::SpaceMouseEvent;
 
 /// Report ID identifying a translation report.
 const REPORT_ID_TRANSLATION: u8 = 1;
@@ -41,16 +34,16 @@ const MIN_AXIS_REPORT_LEN: usize = 7;
 /// reports) or that are too short to contain the axes they claim to. It
 /// never panics on malformed/truncated input, since this data ultimately
 /// comes from external hardware.
-pub fn parse_report(data: &[u8]) -> Option<ReportAxes> {
+pub fn parse_report(data: &[u8]) -> Option<SpaceMouseEvent> {
   let (&report_id, rest) = data.split_first()?;
   match report_id {
     REPORT_ID_TRANSLATION if data.len() >= MIN_AXIS_REPORT_LEN => {
       let (x, y, z) = read_three_axes(rest);
-      Some(ReportAxes::Translation(x, y, z))
+      Some(SpaceMouseEvent::Translation { x, y, z })
     }
     REPORT_ID_ROTATION if data.len() >= MIN_AXIS_REPORT_LEN => {
       let (x, y, z) = read_three_axes(rest);
-      Some(ReportAxes::Rotation(x, y, z))
+      Some(SpaceMouseEvent::Rotation { x, y, z })
     }
     _ => None,
   }
@@ -82,7 +75,11 @@ mod tests {
     let data = [1u8, 0x10, 0x00, 0x20, 0x00, 0xf0, 0xff];
     assert_eq!(
       parse_report(&data),
-      Some(ReportAxes::Translation(0x10, 0x20, -16))
+      Some(SpaceMouseEvent::Translation {
+        x: 0x10,
+        y: 0x20,
+        z: -16,
+      })
     );
   }
 
@@ -92,7 +89,11 @@ mod tests {
     let data = [2u8, 0xff, 0xff, 0x00, 0x00, 0xff, 0x7f];
     assert_eq!(
       parse_report(&data),
-      Some(ReportAxes::Rotation(-1, 0, 0x7fff))
+      Some(SpaceMouseEvent::Rotation {
+        x: -1,
+        y: 0,
+        z: 0x7fff,
+      })
     );
   }
 

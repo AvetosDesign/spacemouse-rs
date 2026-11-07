@@ -1,6 +1,7 @@
 //! `hidapi`-based background capture loop.
 
-use crate::report::{parse_report, ReportAxes};
+use crate::event::SpaceMouseEvent;
+use crate::report::parse_report;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -35,33 +36,12 @@ const READ_TIMEOUT_MS: i32 = 200;
 /// HID input reports are small. This includes generous headroom.
 const READ_BUF_LEN: usize = 64;
 
-/// Raw, unscaled motion values reported by a 3D mouse.
-///
-/// Values are whatever the device's translation/rotation HID reports contain -
-/// no sensitivity scaling, dead-zone handling, or calibration is applied here
-/// (see the crate-level docs).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SpaceMouseMotion {
-  /// Translate left(-)/right(+)
-  pub translation_x: i16,
-  /// Translate away(-)/towards(+) the user
-  pub translation_y: i16,
-  /// Translate down(-)/up(+)
-  pub translation_z: i16,
-  /// Tilt (pitch)
-  pub rotation_x: i16,
-  /// Tilt (roll)
-  pub rotation_y: i16,
-  /// Twist (yaw)
-  pub rotation_z: i16,
-}
-
 /// Cross-platform SpaceMouse HID capture loop.
 ///
 /// Handle to a loop running on a background thread, which continuously
 /// (re-)discovers a compatible device, reads its raw HID reports, and
-/// forwards decoded motion / connection-state changes to the callbacks given
-/// to [`SpaceMouseLoop::new`]. The loop stops when the handle is dropped.
+/// forwards the resulting [`SpaceMouseEvent`]s to the callback given to
+/// [`SpaceMouseLoop::new`]. The loop stops when the handle is dropped.
 /// Constructing one is a safe no-op on a machine without a compatible device
 /// connected. A device that is plugged in later, or unplugged and replugged,
 /// is picked up automatically.
@@ -70,7 +50,7 @@ pub struct SpaceMouseLoop {
   stop: Arc<AtomicBool>,
   /// Whether a compatible device is currently open. Kept outside the
   /// thread so [`SpaceMouseLoop::is_connected`] doesn't have to
-  /// synchronize with it via the callbacks.
+  /// synchronize with it via the callback.
   connected: Arc<AtomicBool>,
   /// Sends desired LED on/off state into the background thread - see
   /// [`SpaceMouseLoop::set_led`].
@@ -83,15 +63,12 @@ pub struct SpaceMouseLoop {
 impl SpaceMouseLoop {
   /// Start capturing in a new background thread.
   ///
-  /// `on_motion` is invoked (on the background thread, *not* the caller's
-  /// thread) with the full, merged six-axis state every time a report is
-  /// decoded. `on_connected_changed` is invoked on the background thread
-  /// whenever a compatible device is opened or lost. Callers that need
-  /// these on a specific thread are responsible for the hop themselves.
-  pub fn new<M, C>(on_motion: M, on_connected_changed: C) -> Self
+  /// `on_event` is invoked on the background thread, *not* the caller's
+  /// thread, for every [`SpaceMouseEvent`]. Callers that need events on a
+  /// specific thread are responsible for the hop themselves.
+  pub fn new<F>(on_event: F) -> Self
   where
-    M: Fn(SpaceMouseMotion) + Send + 'static,
-    C: Fn(bool) + Send + 'static,
+    F: Fn(SpaceMouseEvent) + Send + 'static,
   {
     let stop = Arc::new(AtomicBool::new(false));
     let connected = Arc::new(AtomicBool::new(false));
@@ -99,13 +76,7 @@ impl SpaceMouseLoop {
     let thread_stop = Arc::clone(&stop);
     let thread_connected = Arc::clone(&connected);
     let thread = thread::spawn(move || {
-      run(
-        &thread_stop,
-        &thread_connected,
-        &led_receiver,
-        &on_motion,
-        &on_connected_changed,
-      );
+      run(&thread_stop, &thread_connected, &led_receiver, &on_event);
     });
     Self {
       stop,
@@ -149,15 +120,13 @@ impl Drop for SpaceMouseLoop {
 /// (or `stop` is set), then goes back to looking for one - so a
 /// hot-unplugged/replugged device recovers on its own without recreating
 /// [`SpaceMouseLoop`].
-fn run<M, C>(
+fn run<F>(
   stop: &AtomicBool,
   connected: &AtomicBool,
   led_receiver: &mpsc::Receiver<bool>,
-  on_motion: &M,
-  on_connected_changed: &C,
+  on_event: &F,
 ) where
-  M: Fn(SpaceMouseMotion),
-  C: Fn(bool),
+  F: Fn(SpaceMouseEvent),
 {
   // LED state is connection-bound
   let mut desired_led = true;
@@ -192,10 +161,9 @@ fn run<M, C>(
     };
 
     connected.store(true, Ordering::Relaxed);
-    on_connected_changed(true);
+    on_event(SpaceMouseEvent::Connected);
     write_led(&device, desired_led);
 
-    let mut motion = SpaceMouseMotion::default();
     let mut buf = [0u8; READ_BUF_LEN];
     loop {
       // Drain (and apply) any pending LED command before honoring a `stop`
@@ -214,27 +182,15 @@ fn run<M, C>(
       }
       if stop.load(Ordering::Relaxed) {
         connected.store(false, Ordering::Relaxed);
-        on_connected_changed(false);
+        on_event(SpaceMouseEvent::Disconnected);
         return;
       }
       match device.read_timeout(&mut buf, READ_TIMEOUT_MS) {
         // Timed out without any data - just loop around to re-check `stop`.
         Ok(0) => continue,
         Ok(len) => {
-          if let Some(axes) = parse_report(&buf[..len]) {
-            match axes {
-              ReportAxes::Translation(x, y, z) => {
-                motion.translation_x = x;
-                motion.translation_y = y;
-                motion.translation_z = z;
-              }
-              ReportAxes::Rotation(x, y, z) => {
-                motion.rotation_x = x;
-                motion.rotation_y = y;
-                motion.rotation_z = z;
-              }
-            }
-            on_motion(motion);
+          if let Some(event) = parse_report(&buf[..len]) {
+            on_event(event);
           }
         }
         // The device is gone (unplugged, I/O error, ...): stop reading and
@@ -244,7 +200,7 @@ fn run<M, C>(
     }
 
     connected.store(false, Ordering::Relaxed);
-    on_connected_changed(false);
+    on_event(SpaceMouseEvent::Disconnected);
   }
 }
 

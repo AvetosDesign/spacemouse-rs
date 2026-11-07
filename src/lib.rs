@@ -13,8 +13,10 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
+mod event;
 mod report;
 mod spacemouse_loop;
 
 // Re-Exports
-pub use spacemouse_loop::{SpaceMouseLoop, SpaceMouseMotion};
+pub use event::SpaceMouseEvent;
+pub use spacemouse_loop::SpaceMouseLoop;
