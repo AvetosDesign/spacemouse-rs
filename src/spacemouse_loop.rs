@@ -56,7 +56,8 @@ enum Command {
 /// [`SpaceMouseLoop::new`]. The loop stops when the handle is dropped.
 /// Constructing one is a safe no-op on a machine without a compatible device
 /// connected. A device that is plugged in later, or unplugged and replugged,
-/// is picked up automatically.
+/// is picked up automatically. If the HID subsystem cannot be initialized,
+/// the loop ends immediately and reports nothing.
 pub struct SpaceMouseLoop {
   /// Whether a compatible device is currently open. Kept outside the
   /// thread so [`SpaceMouseLoop::is_connected`] doesn't have to
@@ -209,6 +210,11 @@ fn run<F>(
 ) where
   F: Fn(SpaceMouseEvent),
 {
+  // Failing to initialize the HID subsystem is not expected to recover.
+  let Ok(mut api) = hidapi::HidApi::new() else {
+    return;
+  };
+
   // LED state is connection-bound
   let mut desired_led = true;
 
@@ -220,31 +226,11 @@ fn run<F>(
       return;
     }
 
-    let api = match hidapi::HidApi::new() {
-      Ok(api) => api,
-      Err(_) => {
-        if wait_for_stop(commands, rescan_interval, &mut desired_led) {
-          return;
-        }
-        continue;
-      }
-    };
-
-    let Some(info) = find_device(&api) else {
+    let Some(device) = open_device(&mut api) else {
       if wait_for_stop(commands, rescan_interval, &mut desired_led) {
         return;
       }
       continue;
-    };
-
-    let device = match info.open_device(&api) {
-      Ok(d) => d,
-      Err(_) => {
-        if wait_for_stop(commands, rescan_interval, &mut desired_led) {
-          return;
-        }
-        continue;
-      }
     };
 
     connected.store(true, Ordering::Relaxed);
@@ -292,6 +278,13 @@ fn run<F>(
 /// write failures.
 fn write_led(device: &hidapi::HidDevice, enabled: bool) {
   let _ = device.write(&[0x04, if enabled { 0x01 } else { 0x00 }]);
+}
+
+/// Refresh the device list and open the first compatible device, if any.
+fn open_device(api: &mut hidapi::HidApi) -> Option<hidapi::HidDevice> {
+  api.refresh_devices().ok()?;
+  let api = &*api;
+  find_device(api)?.open_device(api).ok()
 }
 
 /// Find the first currently-connected, compatible 3D-mouse HID interface.
