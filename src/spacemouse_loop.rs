@@ -1,29 +1,11 @@
-//! `hidapi`-based background capture loop.
+//! Background capture loop running a [`SpaceMouse`] on its own thread.
 
 use crate::event::SpaceMouseEvent;
-use crate::report::parse_report;
+use crate::spacemouse::SpaceMouse;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
-
-/// USB vendor ID used by current 3Dconnexion devices.
-const VENDOR_ID_3DCONNEXION: u16 = 0x256f;
-
-/// Legacy USB vendor ID used by early (Logitech-era) 3Dconnexion devices.
-const VENDOR_ID_LOGITECH_3DCONNEXION: u16 = 0x046d;
-
-/// All USB vendor IDs the device must match to be considered, in no
-/// particular priority order.
-const KNOWN_VENDOR_IDS: [u16; 2] =
-  [VENDOR_ID_3DCONNEXION, VENDOR_ID_LOGITECH_3DCONNEXION];
-
-/// HID usage page identifying "Generic Desktop Controls".
-const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
-
-/// HID usage ID identifying a "Multi-axis Controller" within the Generic
-/// Desktop Controls usage page.
-const USAGE_ID_MULTI_AXIS_CONTROLLER: u16 = 0x08;
 
 /// Default wait between (re-)scans while no compatible device is open.
 const DEFAULT_RESCAN_INTERVAL: Duration = Duration::from_secs(2);
@@ -32,13 +14,10 @@ const DEFAULT_RESCAN_INTERVAL: Duration = Duration::from_secs(2);
 /// enumeration.
 const MIN_RESCAN_INTERVAL: Duration = Duration::from_millis(100);
 
-/// `hidapi` blocking-read timeout while a device is open. Chosen short
-/// enough that a stop or LED request is noticed promptly, long enough to
-/// avoid busy-looping the background thread when the device is idle.
-const READ_TIMEOUT_MS: i32 = 200;
-
-/// HID input reports are small. This includes generous headroom.
-const READ_BUF_LEN: usize = 64;
+/// Blocking-read timeout while a device is open. Chosen short enough that a
+/// stop or LED request is noticed promptly, long enough to avoid
+/// busy-looping the background thread when the device is idle.
+const READ_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Request sent from a [`SpaceMouseLoop`] handle to its background thread.
 enum Command {
@@ -211,7 +190,7 @@ fn run<F>(
   F: Fn(SpaceMouseEvent),
 {
   // Failing to initialize the HID subsystem is not expected to recover.
-  let Ok(mut api) = hidapi::HidApi::new() else {
+  let Ok(mut mouse) = SpaceMouse::new() else {
     return;
   };
 
@@ -226,38 +205,34 @@ fn run<F>(
       return;
     }
 
-    let Some(device) = open_device(&mut api) else {
+    if !mouse.connect() {
       if wait_for_stop(commands, rescan_interval, &mut desired_led) {
         return;
       }
       continue;
-    };
+    }
 
     connected.store(true, Ordering::Relaxed);
     on_event(SpaceMouseEvent::Connected);
-    write_led(&device, desired_led);
+    let _ = mouse.set_led(desired_led);
 
-    let mut buf = [0u8; READ_BUF_LEN];
     loop {
       // Apply any pending LED change before honoring a stop request, so a
       // command sent just before shutdown still reaches the device.
       let drained = drain_commands(commands, &mut desired_led);
       if drained.led_changed {
-        write_led(&device, desired_led);
+        let _ = mouse.set_led(desired_led);
       }
       if drained.stop {
         connected.store(false, Ordering::Relaxed);
         on_event(SpaceMouseEvent::Disconnected);
         return;
       }
-      match device.read_timeout(&mut buf, READ_TIMEOUT_MS) {
-        // Timed out without any data - just loop around to re-check commands.
-        Ok(0) => continue,
-        Ok(len) => {
-          if let Some(event) = parse_report(&buf[..len]) {
-            on_event(event);
-          }
-        }
+      match mouse.read(READ_TIMEOUT) {
+        Ok(Some(event)) => on_event(event),
+        // Timed out or unrecognized report - just loop around to re-check
+        // commands.
+        Ok(None) => {}
         // The device is gone (unplugged, I/O error, ...): stop reading and
         // go back to scanning for a (possibly different) device.
         Err(_) => break,
@@ -267,31 +242,4 @@ fn run<F>(
     connected.store(false, Ordering::Relaxed);
     on_event(SpaceMouseEvent::Disconnected);
   }
-}
-
-/// Write the HID output report that controls the device's LED.
-///
-/// All LED-capable devices across the SpaceNavigator/SpaceMouse/SpacePilot
-/// product line utilize the same HID report format:
-/// Report ID `0x04` + a single data byte (`0x01` on / `0x00` off)
-/// Best-effort: quietly ignore devices without an LED and transient
-/// write failures.
-fn write_led(device: &hidapi::HidDevice, enabled: bool) {
-  let _ = device.write(&[0x04, if enabled { 0x01 } else { 0x00 }]);
-}
-
-/// Refresh the device list and open the first compatible device, if any.
-fn open_device(api: &mut hidapi::HidApi) -> Option<hidapi::HidDevice> {
-  api.refresh_devices().ok()?;
-  let api = &*api;
-  find_device(api)?.open_device(api).ok()
-}
-
-/// Find the first currently-connected, compatible 3D-mouse HID interface.
-fn find_device(api: &hidapi::HidApi) -> Option<&hidapi::DeviceInfo> {
-  api.device_list().find(|d| {
-    KNOWN_VENDOR_IDS.contains(&d.vendor_id())
-      && d.usage_page() == USAGE_PAGE_GENERIC_DESKTOP
-      && d.usage() == USAGE_ID_MULTI_AXIS_CONTROLLER
-  })
 }

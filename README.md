@@ -1,6 +1,6 @@
 # spacemouse
 
-Provides a cross-platform (Windows/macOS/Linux) raw HID capture for
+Provides cross-platform (Windows/macOS/Linux) raw HID capture for
 3Dconnexion SpaceMouse and compatible 3D-mouse devices. HID reports are read
 directly via `hidapi` rather than depending on 3Dconnexion's proprietary
 driver (3DxWare).
@@ -11,6 +11,16 @@ readings and leaves interpretation to the caller.
 
 Built for [LibrePCB](https://librepcb.org)'s SpaceMouse support, but usable by
 any application.
+
+## Usage
+
+The crate offers two layers: `SpaceMouse` gives synchronous access to a device
+(scan for and open it, read events, set its LED), and `SpaceMouseLoop` runs it
+on a background thread and delivers events to a callback, reconnecting
+automatically. See the `examples` directory:
+
+    cargo run --example print_events
+    cargo run --example print_events_sync
 
 ## Why `hidapi`
 

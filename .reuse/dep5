@@ -8,6 +8,7 @@ Files:
  .gitignore
  .rustfmt.toml
  Cargo.toml
+ examples/**.rs
  README.md
  src/**.rs
 Copyright: Avetos Design
