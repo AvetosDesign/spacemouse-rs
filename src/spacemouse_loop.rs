@@ -5,7 +5,7 @@ use crate::report::parse_report;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// USB vendor ID used by current 3Dconnexion devices.
 const VENDOR_ID_3DCONNEXION: u16 = 0x256f;
@@ -25,16 +25,28 @@ const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
 /// Desktop Controls usage page.
 const USAGE_ID_MULTI_AXIS_CONTROLLER: u16 = 0x08;
 
-/// Wait between (re-)scans while no compatible device is open.
-const RESCAN_INTERVAL: Duration = Duration::from_millis(500);
+/// Default wait between (re-)scans while no compatible device is open.
+const DEFAULT_RESCAN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Lower bound for a configured rescan interval, to avoid churning on device
+/// enumeration.
+const MIN_RESCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 /// `hidapi` blocking-read timeout while a device is open. Chosen short
-/// enough that a `stop()` request is noticed promptly, long enough to avoid
-/// busy-looping the background thread when the device is idle.
+/// enough that a stop or LED request is noticed promptly, long enough to
+/// avoid busy-looping the background thread when the device is idle.
 const READ_TIMEOUT_MS: i32 = 200;
 
 /// HID input reports are small. This includes generous headroom.
 const READ_BUF_LEN: usize = 64;
+
+/// Request sent from a [`SpaceMouseLoop`] handle to its background thread.
+enum Command {
+  /// Set whether the device's LED is lit.
+  SetLed(bool),
+  /// Stop the loop.
+  Stop,
+}
 
 /// Cross-platform SpaceMouse HID capture loop.
 ///
@@ -46,15 +58,13 @@ const READ_BUF_LEN: usize = 64;
 /// connected. A device that is plugged in later, or unplugged and replugged,
 /// is picked up automatically.
 pub struct SpaceMouseLoop {
-  /// Signals the background thread to stop and return.
-  stop: Arc<AtomicBool>,
   /// Whether a compatible device is currently open. Kept outside the
   /// thread so [`SpaceMouseLoop::is_connected`] doesn't have to
   /// synchronize with it via the callback.
   connected: Arc<AtomicBool>,
-  /// Sends desired LED on/off state into the background thread - see
-  /// [`SpaceMouseLoop::set_led`].
-  led_sender: mpsc::Sender<bool>,
+  /// Sends requests into the background thread - see
+  /// [`SpaceMouseLoop::set_led`] and [`Drop::drop`].
+  command_sender: mpsc::Sender<Command>,
   /// The background thread, joined on drop. Always `Some` until
   /// [`Drop::drop`] runs.
   thread: Option<thread::JoinHandle<()>>,
@@ -66,22 +76,37 @@ impl SpaceMouseLoop {
   /// `on_event` is invoked on the background thread, *not* the caller's
   /// thread, for every [`SpaceMouseEvent`]. Callers that need events on a
   /// specific thread are responsible for the hop themselves.
+  ///
+  /// Waits between scans (while no compatible device is open) using the
+  /// default scan interval. See [`SpaceMouseLoop::with_rescan_interval`]
+  /// for a configurable scan period.
   pub fn new<F>(on_event: F) -> Self
   where
     F: Fn(SpaceMouseEvent) + Send + 'static,
   {
-    let stop = Arc::new(AtomicBool::new(false));
+    Self::with_rescan_interval(DEFAULT_RESCAN_INTERVAL, on_event)
+  }
+
+  /// Like [`SpaceMouseLoop::new`], but waits `rescan_interval` between scans
+  /// while no compatible device is open.
+  ///
+  /// Shorter intervals pick up a newly connected device sooner, at the cost
+  /// of enumerating the system's HID devices more often. Values below 100 ms
+  /// are raised to 100 ms.
+  pub fn with_rescan_interval<F>(rescan_interval: Duration, on_event: F) -> Self
+  where
+    F: Fn(SpaceMouseEvent) + Send + 'static,
+  {
+    let rescan_interval = rescan_interval.max(MIN_RESCAN_INTERVAL);
     let connected = Arc::new(AtomicBool::new(false));
-    let (led_sender, led_receiver) = mpsc::channel();
-    let thread_stop = Arc::clone(&stop);
+    let (command_sender, commands) = mpsc::channel();
     let thread_connected = Arc::clone(&connected);
     let thread = thread::spawn(move || {
-      run(&thread_stop, &thread_connected, &led_receiver, &on_event);
+      run(&thread_connected, &commands, rescan_interval, &on_event);
     });
     Self {
-      stop,
       connected,
-      led_sender,
+      command_sender,
       thread: Some(thread),
     }
   }
@@ -98,13 +123,14 @@ impl SpaceMouseLoop {
   /// failures are silently ignored.
   pub fn set_led(&self, enabled: bool) {
     // Send only fails once the background thread has exited, e.g. during drop.
-    let _ = self.led_sender.send(enabled);
+    let _ = self.command_sender.send(Command::SetLed(enabled));
   }
 }
 
 impl Drop for SpaceMouseLoop {
   fn drop(&mut self) {
-    self.stop.store(true, Ordering::Relaxed);
+    // Send only fails if the background thread has already exited.
+    let _ = self.command_sender.send(Command::Stop);
     if let Some(t) = self.thread.take() {
       // Only fails if the background thread itself panicked; there is no
       // sensible way to surface that from a `Drop` impl, so it's dropped
@@ -114,16 +140,71 @@ impl Drop for SpaceMouseLoop {
   }
 }
 
+/// Outcome of draining the pending commands.
+struct Drained {
+  /// Whether the desired LED state changed.
+  led_changed: bool,
+  /// Whether a stop was requested.
+  stop: bool,
+}
+
+/// Apply all pending commands without blocking.
+fn drain_commands(
+  commands: &mpsc::Receiver<Command>,
+  desired_led: &mut bool,
+) -> Drained {
+  let mut drained = Drained {
+    led_changed: false,
+    stop: false,
+  };
+  loop {
+    match commands.try_recv() {
+      Ok(Command::SetLed(enabled)) => {
+        if enabled != *desired_led {
+          *desired_led = enabled;
+          drained.led_changed = true;
+        }
+      }
+      Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+        drained.stop = true;
+        break;
+      }
+      Err(mpsc::TryRecvError::Empty) => break,
+    }
+  }
+  drained
+}
+
+/// Wait up to `timeout` for a stop request, applying LED commands that
+/// arrive in the meantime. Returns whether a stop was requested.
+fn wait_for_stop(
+  commands: &mpsc::Receiver<Command>,
+  timeout: Duration,
+  desired_led: &mut bool,
+) -> bool {
+  let deadline = Instant::now() + timeout;
+  loop {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    match commands.recv_timeout(remaining) {
+      Ok(Command::SetLed(enabled)) => *desired_led = enabled,
+      Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+        return true;
+      }
+      Err(mpsc::RecvTimeoutError::Timeout) => return false,
+    }
+  }
+}
+
 /// Body of the background capture thread.
 ///
 /// Repeatedly looks for a compatible device, reads from it until it's lost
-/// (or `stop` is set), then goes back to looking for one - so a
+/// (or a stop is requested), then goes back to looking for one - so a
 /// hot-unplugged/replugged device recovers on its own without recreating
 /// [`SpaceMouseLoop`].
 fn run<F>(
-  stop: &AtomicBool,
   connected: &AtomicBool,
-  led_receiver: &mpsc::Receiver<bool>,
+  commands: &mpsc::Receiver<Command>,
+  rescan_interval: Duration,
   on_event: &F,
 ) where
   F: Fn(SpaceMouseEvent),
@@ -131,31 +212,37 @@ fn run<F>(
   // LED state is connection-bound
   let mut desired_led = true;
 
-  while !stop.load(Ordering::Relaxed) {
+  loop {
     // Track any LED command(s) that arrive even if no device is connected.
     // This ensures that when a device is connected, its LED is set to the
     // correct state.
-    while let Ok(enabled) = led_receiver.try_recv() {
-      desired_led = enabled;
+    if drain_commands(commands, &mut desired_led).stop {
+      return;
     }
 
     let api = match hidapi::HidApi::new() {
       Ok(api) => api,
       Err(_) => {
-        thread::sleep(RESCAN_INTERVAL);
+        if wait_for_stop(commands, rescan_interval, &mut desired_led) {
+          return;
+        }
         continue;
       }
     };
 
     let Some(info) = find_device(&api) else {
-      thread::sleep(RESCAN_INTERVAL);
+      if wait_for_stop(commands, rescan_interval, &mut desired_led) {
+        return;
+      }
       continue;
     };
 
     let device = match info.open_device(&api) {
       Ok(d) => d,
       Err(_) => {
-        thread::sleep(RESCAN_INTERVAL);
+        if wait_for_stop(commands, rescan_interval, &mut desired_led) {
+          return;
+        }
         continue;
       }
     };
@@ -166,27 +253,19 @@ fn run<F>(
 
     let mut buf = [0u8; READ_BUF_LEN];
     loop {
-      // Drain (and apply) any pending LED command before honoring a `stop`
-      // request below. Ordering matters: if this were done after the `stop`
-      // check, a command sent just before shutdown could be left sitting in
-      // the channel forever.
-      let mut led_changed = false;
-      while let Ok(enabled) = led_receiver.try_recv() {
-        if enabled != desired_led {
-          desired_led = enabled;
-          led_changed = true;
-        }
-      }
-      if led_changed {
+      // Apply any pending LED change before honoring a stop request, so a
+      // command sent just before shutdown still reaches the device.
+      let drained = drain_commands(commands, &mut desired_led);
+      if drained.led_changed {
         write_led(&device, desired_led);
       }
-      if stop.load(Ordering::Relaxed) {
+      if drained.stop {
         connected.store(false, Ordering::Relaxed);
         on_event(SpaceMouseEvent::Disconnected);
         return;
       }
       match device.read_timeout(&mut buf, READ_TIMEOUT_MS) {
-        // Timed out without any data - just loop around to re-check `stop`.
+        // Timed out without any data - just loop around to re-check commands.
         Ok(0) => continue,
         Ok(len) => {
           if let Some(event) = parse_report(&buf[..len]) {
